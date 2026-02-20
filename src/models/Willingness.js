@@ -7,22 +7,42 @@ const willingnessSchema = new mongoose.Schema(
       ref: "Teacher",
       required: true
     },
+
+    // 🔥 NEW
+    semesters: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Section"
+      }
+    ],
+
+    // 🔥 NEW
+    batches: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Batch"
+      }
+    ],
+
     subjects: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Subject"
       }
     ],
+
     availability: {
       type: Map,
-      of: [Number], // Day → Array of available slots (e.g., Monday: [1,2,3])
+      of: [Number],
       default: {}
     },
+
     preferredSlots: {
       type: Map,
       of: [Number],
       default: {}
     },
+
     status: {
       type: String,
       enum: ["pending", "approved", "rejected"],

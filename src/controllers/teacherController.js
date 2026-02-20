@@ -40,49 +40,39 @@ export const getAssignedSubjects = async (req, res) => {
    2. SUBMIT WILLINGNESS FORM
    Route: POST /api/teachers/willingness
    ============================================================ */
-export const submitWillingness = async (req, res) => {
-  try {
-    const teacherId = req.user.teacherId;
-    const { subjects, availability } = req.body;
-
-    if (!teacherId) {
-      return res.status(403).json({ message: "No teacher account linked" });
+   export const submitWillingness = async (req, res) => {
+    try {
+      const teacherId = req.user.teacherId;
+      const { subjects, availability, semesters, batches } = req.body;
+  
+      if (!teacherId) {
+        return res.status(403).json({ message: "No teacher account linked" });
+      }
+  
+      const form = await Willingness.findOneAndUpdate(
+        { teacherId },
+        {
+          teacherId,
+          subjects,
+          availability,
+          semesters,
+          batches,
+          status: "pending"
+        },
+        { new: true, upsert: true }
+      );
+  
+      res.json({
+        success: true,
+        message: "Willingness submitted successfully",
+        form
+      });
+  
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
-
-    if (!subjects || subjects.length === 0) {
-      return res.status(400).json({ message: "Please select at least one subject" });
-    }
-
-    if (!availability) {
-      return res.status(400).json({ message: "Availability is required" });
-    }
-
-    const form = await Willingness.findOneAndUpdate(
-      { teacherId },
-      {
-        teacherId,
-        subjects,
-        availability,
-        status: "pending",
-      },
-      { new: true, upsert: true }
-    );
-
-    res.json({
-      success: true,
-      message: "Willingness submitted successfully",
-      form,
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to submit willingness",
-      error: error.message,
-    });
-  }
-};
-
+  };
+  
 
 /* ============================================================
    3. GET TIMETABLE FOR LOGGED-IN TEACHER

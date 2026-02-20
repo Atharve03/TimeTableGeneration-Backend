@@ -2,11 +2,15 @@ import mongoose from "mongoose";
 
 const sectionSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },
-    year: { type: String, required: true }, // e.g., 2025–26
+    name: { type: String, required: true }, // A1, B1, C1 etc
+    year: { type: String, required: true },
     semester: { type: String, enum: ["odd", "even"], required: true },
     department: { type: String, required: true },
-    isFrozen: { type: Boolean, default: false } // timetable locked for semester
+
+    totalStudents: { type: Number, default: 0 },
+    strength: { type: Number, default: 60 }, // max students per section
+
+    isFrozen: { type: Boolean, default: false }
   },
   { timestamps: true }
 );
