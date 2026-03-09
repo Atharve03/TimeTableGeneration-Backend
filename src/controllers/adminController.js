@@ -105,12 +105,17 @@ export const setSemester = async (req, res) => {
 
 // ----------------------------------------------------
 // 5) GET ALL WILLINGNESS FOR ADMIN VIEW
+//    Updated — populates semesters.subjects (new structure)
 // ----------------------------------------------------
 export const getAllWillingness = async (req, res) => {
   try {
     const data = await Willingness.find()
       .populate("teacherId")
-      .populate("subjects");
+      .populate({
+        path:   "semesters.subjects",
+        model:  "Subject",
+        select: "name code isLab sem program weeklyLectures",
+      });
 
     res.json(data);
   } catch (err) {
@@ -121,10 +126,15 @@ export const getAllWillingness = async (req, res) => {
 
 // ----------------------------------------------------
 // 6) GET ALL SUBJECTS
+//    Updated — supports ?program=btech&sem=3 filters
 // ----------------------------------------------------
 export const getAllSubjects = async (req, res) => {
   try {
-    const subjects = await Subject.find();
+    const filter = {};
+    if (req.query.program) filter.program = req.query.program;
+    if (req.query.sem)     filter.sem     = Number(req.query.sem);
+
+    const subjects = await Subject.find(filter).sort({ program: 1, sem: 1, name: 1 });
     res.json(subjects);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch subjects" });
@@ -212,6 +222,56 @@ export const editTimetable = async (req, res) => {
 
     res.json({ message: "Timetable updated", updated });
 
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+
+// ----------------------------------------------------
+// 12) GET ALL TIMETABLES — admin list/grid view  (NEW)
+//     Supports ?search=name filter
+// ----------------------------------------------------
+export const getAllTimetables = async (req, res) => {
+  try {
+    const entries = await Timetable.find()
+      .populate("teacherId",  "name email designation")
+      .populate("subjectId",  "name code isLab sem program weeklyLectures")
+      .populate("sectionId",  "name")
+      .populate("batchId",    "name")
+      .sort({ day: 1, slot: 1 });
+
+    const { search } = req.query;
+    let result = entries;
+    if (search) {
+      const q = search.toLowerCase();
+      result = entries.filter(
+        (e) =>
+          e.teacherId?.name?.toLowerCase().includes(q) ||
+          e.subjectId?.name?.toLowerCase().includes(q) ||
+          e.subjectId?.code?.toLowerCase().includes(q)
+      );
+    }
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+
+// ----------------------------------------------------
+// 13) DELETE TIMETABLE ENTRY  (NEW)
+// ----------------------------------------------------
+export const deleteTimetable = async (req, res) => {
+  try {
+    const deleted = await Timetable.findByIdAndDelete(req.params.id);
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Timetable entry not found" });
+    }
+
+    res.json({ message: "Timetable entry deleted successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
