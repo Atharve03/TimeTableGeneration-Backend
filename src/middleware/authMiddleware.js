@@ -15,10 +15,18 @@ export const protect = async (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    req.user = decoded; // already contains id, role, teacherId
-
+    req.user = decoded; // contains id, role, teacherId
     next();
   } catch (error) {
     return res.status(401).json({ message: "Not authorized, token failed" });
+  }
+};
+
+// ✅ Add this middleware
+export const adminOnly = (req, res, next) => {
+  if (req.user && req.user.role === "admin") {
+    next();
+  } else {
+    return res.status(403).json({ message: "Admin access only" });
   }
 };

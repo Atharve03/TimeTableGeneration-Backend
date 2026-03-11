@@ -1,49 +1,50 @@
-const express = require("express");
-const router  = express.Router();
-const {
-  addTeacher,
-  getTeachers,
-  addSubject,
-  getSubjects,
+import express from "express";
+import { protect }        from "../middleware/authMiddleware.js";
+import { authorizeRoles } from "../middleware/roleMiddleware.js";
+
+import {
+  addTeacher, getAllTeachers,
+  addSubject, getAllSubjects,
   assignSubject,
-  setSemester,
-  freezeSemester,
-  getWillingness,
-  approveWillingness,
+  setSemester, getAllSections,
+  approveWillingness, getAllWillingness,
   generateTimetableHandler,
-  getAllTimetables,
-  editTimetable,
-  deleteTimetable,
-} = require("../controllers/adminController");
+  freezeSemester, editTimetable,
+  getAllTimetables, deleteTimetable,
+  addBatch, getAllBatches, deleteBatch,
+  addRoom, getAllRooms, deleteRoom,
+} from "../controllers/adminController.js";
 
-const { protect, adminOnly } = require("../middleware/authMiddleware");
+const router = express.Router();
+router.use(protect);
+router.use(authorizeRoles("admin"));
 
-// All admin routes are protected
-router.use(protect, adminOnly);
+router.post("/teachers",            addTeacher);
+router.get("/teachers",             getAllTeachers);
 
-// ── Teachers ──────────────────────────────────────────────────
-router.post("/teachers",         addTeacher);
-router.get("/teachers",          getTeachers);
+router.post("/subjects",            addSubject);
+router.get("/subjects",             getAllSubjects);
 
-// ── Subjects ──────────────────────────────────────────────────
-router.post("/subjects",         addSubject);
-router.get("/subjects",          getSubjects);   // supports ?program=btech&sem=3
+router.post("/assign-subject",      assignSubject);
 
-// ── Assignments ───────────────────────────────────────────────
-router.post("/assign-subject",   assignSubject);
+router.post("/set-semester",        setSemester);
+router.get("/sections",             getAllSections);
 
-// ── Semester / Section ────────────────────────────────────────
-router.post("/set-semester",     setSemester);
-router.post("/freeze-semester/:id", freezeSemester);
+router.post("/batches",             addBatch);
+router.get("/batches",              getAllBatches);
+router.delete("/batches/:id",       deleteBatch);
 
-// ── Willingness ───────────────────────────────────────────────
-router.get("/willingness",       getWillingness);
+router.post("/rooms",               addRoom);
+router.get("/rooms",                getAllRooms);
+router.delete("/rooms/:id",         deleteRoom);
+
+router.get("/willingness",          getAllWillingness);
 router.post("/approve-willingness", approveWillingness);
 
-// ── Timetable ─────────────────────────────────────────────────
-router.post("/generate-timetable",        generateTimetableHandler);
-router.get("/timetable",                  getAllTimetables);        // NEW — list all with search
-router.put("/edit-timetable/:id",         editTimetable);
-router.delete("/timetable/:id",           deleteTimetable);         // NEW — delete entry
+router.post("/generate-timetable",  generateTimetableHandler);
+router.post("/freeze-semester",     freezeSemester);
+router.put("/edit-timetable/:id",   editTimetable);
+router.get("/timetables",           getAllTimetables);
+router.delete("/timetables/:id",    deleteTimetable);
 
-module.exports = router;
+export default router;

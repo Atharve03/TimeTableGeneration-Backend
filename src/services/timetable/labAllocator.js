@@ -4,99 +4,75 @@ import {
   hasBatchConflict,
   hasSectionConflict,
   hasRoomConflict,
-  isWithinAvailability
 } from "./conflictChecker.js";
 
-export default async function allocateLabs({
-  teachers,
-  subjects,
-  batches,
-  availabilityMatrix,
-  days,
-  slotsPerDay
+export async function allocateLabs({
+  subjects, batches, sections, labRoleMap,
+  labRooms = ["LAB-1","LAB-2"],
+  days, slotsPerDay,
 }) {
-  const timetable = [];
+  const timetable   = [];
   const labSubjects = subjects.filter((s) => s.isLab);
 
+  console.log(`[LAB] Processing ${labSubjects.length} lab subjects, ${batches.length} batches`);
+
   for (const lab of labSubjects) {
+    const sid   = lab._id.toString();
+    const roles = labRoleMap.get(sid);
 
-    const mainTeacher = teachers.find((t) => t.roleMap[lab._id.toString()] === "main");
-    const coTeacher   = teachers.find((t) => t.roleMap[lab._id.toString()] === "cofaculty");
-
-    if (!mainTeacher || !coTeacher) {
-      console.warn(`Lab "${lab.name}" skipped — missing main or cofaculty teacher.`);
+    if (!roles || (!roles.main && !roles.cofaculty)) {
+      console.warn(`[LAB] "${lab.name}" skipped — no teacher assigned`);
       continue;
     }
 
-    for (const batch of batches) {
+    const mainTeacher = roles.main      || roles.cofaculty;
+    const coTeacher   = roles.cofaculty || roles.main;
 
-      if (!batch.sectionId) {
-        console.warn(`Batch has no sectionId — skipping.`);
-        continue;
-      }
+    console.log(`[LAB] "${lab.name}" — main: ${mainTeacher.name}, co: ${coTeacher.name}`);
 
-      // ✅ FIX: always convert sectionId to a proper ObjectId
-      const sectionId = new mongoose.Types.ObjectId(batch.sectionId.toString());
-      const batchId   = new mongoose.Types.ObjectId(batch._id.toString());
+    let sectionId, batchId;
+    if (batches.length > 0) {
+      const batch = batches[0];
+      if (!batch.sectionId) { console.warn(`[LAB] Batch has no sectionId`); continue; }
+      sectionId = new mongoose.Types.ObjectId(batch.sectionId._id?.toString() || batch.sectionId.toString());
+      batchId   = new mongoose.Types.ObjectId(batch._id.toString());
+    } else if (sections.length > 0) {
+      sectionId = new mongoose.Types.ObjectId(sections[0]._id.toString());
+      batchId   = null;
+    } else {
+      console.warn(`[LAB] No batch or section`); continue;
+    }
 
-      let placed = false;
+    let placed = false;
 
-      for (const day of days) {
-        if (placed) break;
+    outer: for (const day of days) {
+      for (let slot = 1; slot <= slotsPerDay - 1; slot++) {
+        const slot2 = slot + 1;
 
-        for (let slot = 1; slot <= slotsPerDay - 1; slot++) {
-          const slot2 = slot + 1;
+        if (hasTeacherConflict(timetable, mainTeacher._id, day, slot))  continue;
+        if (hasTeacherConflict(timetable, mainTeacher._id, day, slot2)) continue;
+        if (hasTeacherConflict(timetable, coTeacher._id,   day, slot))  continue;
+        if (hasTeacherConflict(timetable, coTeacher._id,   day, slot2)) continue;
+        if (hasSectionConflict(timetable, sectionId, day, slot))  continue;
+        if (hasSectionConflict(timetable, sectionId, day, slot2)) continue;
+        if (batchId && hasBatchConflict(timetable, batchId, day, slot))  continue;
+        if (batchId && hasBatchConflict(timetable, batchId, day, slot2)) continue;
 
-          if (!isWithinAvailability(availabilityMatrix, mainTeacher._id.toString(), day, slot))  continue;
-          if (!isWithinAvailability(availabilityMatrix, mainTeacher._id.toString(), day, slot2)) continue;
-          if (!isWithinAvailability(availabilityMatrix, coTeacher._id.toString(),   day, slot))  continue;
-          if (!isWithinAvailability(availabilityMatrix, coTeacher._id.toString(),   day, slot2)) continue;
+        const room = labRooms.find(
+          (r) => !hasRoomConflict(timetable, day, slot, r) && !hasRoomConflict(timetable, day, slot2, r)
+        );
+        if (!room) continue;
 
-          if (hasTeacherConflict(timetable, day, slot,  mainTeacher._id)) continue;
-          if (hasTeacherConflict(timetable, day, slot2, mainTeacher._id)) continue;
-          if (hasTeacherConflict(timetable, day, slot,  coTeacher._id))   continue;
-          if (hasTeacherConflict(timetable, day, slot2, coTeacher._id))   continue;
+        timetable.push({ sectionId, batchId, day, slot,       subjectId: new mongoose.Types.ObjectId(sid), teacherId: new mongoose.Types.ObjectId(mainTeacher._id.toString()), room, isLab: true });
+        timetable.push({ sectionId, batchId, day, slot: slot2, subjectId: new mongoose.Types.ObjectId(sid), teacherId: new mongoose.Types.ObjectId(coTeacher._id.toString()),   room, isLab: true });
 
-          if (hasBatchConflict(timetable, day, slot,  batchId)) continue;
-          if (hasBatchConflict(timetable, day, slot2, batchId)) continue;
-
-          if (hasSectionConflict(timetable, day, slot,  sectionId)) continue;
-          if (hasSectionConflict(timetable, day, slot2, sectionId)) continue;
-
-          if (hasRoomConflict(timetable, day, slot,  "LAB-1")) continue;
-          if (hasRoomConflict(timetable, day, slot2, "LAB-1")) continue;
-
-          timetable.push({
-            sectionId,
-            batchId,
-            day,
-            slot,
-            subjectId: new mongoose.Types.ObjectId(lab._id.toString()),
-            teacherId: new mongoose.Types.ObjectId(mainTeacher._id.toString()),
-            room:      "LAB-1",
-            isLab:     true
-          });
-
-          timetable.push({
-            sectionId,
-            batchId,
-            day,
-            slot:      slot2,
-            subjectId: new mongoose.Types.ObjectId(lab._id.toString()),
-            teacherId: new mongoose.Types.ObjectId(coTeacher._id.toString()),
-            room:      "LAB-1",
-            isLab:     true
-          });
-
-          placed = true;
-          break;
-        }
-      }
-
-      if (!placed) {
-        console.warn(`Lab "${lab.name}" could NOT be placed for batch — no free slots found.`);
+        console.log(`[LAB] "${lab.name}" placed at ${day} slots ${slot} & ${slot2} in ${room}`);
+        placed = true;
+        break outer;
       }
     }
+
+    if (!placed) console.warn(`[LAB] "${lab.name}" could NOT be placed.`);
   }
 
   console.log("LAB ALLOCATOR — total entries placed:", timetable.length);

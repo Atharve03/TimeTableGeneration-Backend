@@ -1,18 +1,8 @@
 /**
  * conflictChecker.js
  * All conflict checking functions for timetable generation.
- * A "conflict" means two entries share the same day+slot and
- * involve the same teacher OR the same section/batch.
  */
 
-/**
- * Check if a teacher already has a class at a given day + slot.
- * @param {Array}  timetable  - current in-memory timetable entries
- * @param {string} teacherId  - teacher ObjectId as string
- * @param {string} day        - e.g. "Day Order 1"
- * @param {number} slot       - slot number 1-10
- * @returns {boolean}
- */
 function hasTeacherConflict(timetable, teacherId, day, slot) {
   return timetable.some(
     (entry) =>
@@ -22,9 +12,6 @@ function hasTeacherConflict(timetable, teacherId, day, slot) {
   );
 }
 
-/**
- * Check if a section already has a class at a given day + slot.
- */
 function hasSectionConflict(timetable, sectionId, day, slot) {
   return timetable.some(
     (entry) =>
@@ -34,9 +21,6 @@ function hasSectionConflict(timetable, sectionId, day, slot) {
   );
 }
 
-/**
- * Check if a batch already has a class at a given day + slot.
- */
 function hasBatchConflict(timetable, batchId, day, slot) {
   return timetable.some(
     (entry) =>
@@ -46,45 +30,54 @@ function hasBatchConflict(timetable, batchId, day, slot) {
   );
 }
 
-/**
- * Check teacher availability from willingness matrix.
- * @param {object} teacher  - teacher document (has .availability Map)
- * @param {string} day      - e.g. "Day Order 1"
- * @param {number} slot     - slot number 1-10
- * @returns {boolean} true if teacher is available
- */
-function isWithinAvailability(teacher, day, slot) {
-  if (!teacher.availability) return false;
-  // availability is a Map or plain object
-  const slots =
-    typeof teacher.availability.get === "function"
-      ? teacher.availability.get(day)
-      : teacher.availability[day];
-  if (!Array.isArray(slots)) return false;
-  return slots.includes(slot);
+function hasRoomConflict(timetable, day, slot, room) {
+  return timetable.some(
+    (entry) =>
+      entry.day === day &&
+      entry.slot === slot &&
+      entry.room === room
+  );
 }
 
 /**
- * Full conflict check before placing any entry.
- * Returns true if it is SAFE to place the entry (no conflicts).
+ * Check teacher availability.
+ * Handles Mongoose Map (type: Map), plain object, and native Map.
+ * Compares loosely (==) so number 1 matches string "1".
  */
+function isWithinAvailability(teacher, day, slot) {
+  if (!teacher || !teacher.availability) return false;
+
+  let slots;
+
+  if (typeof teacher.availability.get === "function") {
+    // Mongoose Map or native Map
+    slots = teacher.availability.get(day);
+  } else {
+    // Plain object
+    slots = teacher.availability[day];
+  }
+
+  if (!slots) return false;
+
+  // Convert to array if needed
+  const arr = Array.isArray(slots) ? slots : Array.from(slots);
+
+  // Loose equality: slot number 1 matches stored "1" or 1
+  return arr.some((s) => s == slot);
+}
+
 function isSafePlacement(timetable, { teacherId, sectionId, batchId, day, slot }) {
-  // Teacher conflict — most critical
   if (hasTeacherConflict(timetable, teacherId, day, slot)) return false;
-
-  // Section conflict
   if (sectionId && hasSectionConflict(timetable, sectionId, day, slot)) return false;
-
-  // Batch conflict (for labs)
   if (batchId && hasBatchConflict(timetable, batchId, day, slot)) return false;
-
   return true;
 }
 
-module.exports = {
+export {
   hasTeacherConflict,
   hasSectionConflict,
   hasBatchConflict,
+  hasRoomConflict,
   isWithinAvailability,
   isSafePlacement,
 };

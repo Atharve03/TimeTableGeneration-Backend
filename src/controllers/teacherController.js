@@ -1,21 +1,18 @@
 import TeacherSubject from "../models/TeacherSubject.js";
-import Willingness from "../models/Willingness.js";
-import Timetable from "../models/Timetable.js";
+import Willingness   from "../models/Willingness.js";
+import Timetable     from "../models/Timetable.js";
+import Subject       from "../models/Subject.js";
 
 /* ============================================================
-   1. GET ASSIGNED SUBJECTS FOR LOGGED-IN TEACHER
-   Route: GET /api/teachers/subjects
+   1. GET ASSIGNED SUBJECTS
    ============================================================ */
 export const getAssignedSubjects = async (req, res) => {
   try {
     const teacherId = req.user.teacherId;
-
-    if (!teacherId) {
+    if (!teacherId)
       return res.status(403).json({ message: "Not linked to a teacher account" });
-    }
 
-    const assigned = await TeacherSubject.find({ teacherId })
-      .populate("subjectId");
+    const assigned = await TeacherSubject.find({ teacherId }).populate("subjectId");
 
     const subjects = assigned.map((item) => ({
       _id:     item.subjectId._id,
@@ -24,115 +21,71 @@ export const getAssignedSubjects = async (req, res) => {
       isLab:   item.subjectId.isLab,
       sem:     item.subjectId.sem,
       program: item.subjectId.program,
+      weeklyLectures: item.subjectId.weeklyLectures,
       role:    item.role,
     }));
 
     res.json({ success: true, subjects });
-
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch assigned subjects",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: "Failed to fetch assigned subjects", error: error.message });
   }
 };
 
-
 /* ============================================================
-   2. SUBMIT WILLINGNESS FORM  (updated — new semesters structure)
-   Route: POST /api/teachers/willingness
-
-   Expected body:
-   {
-     semesters: [
-       {
-         sem: 3,
-         program: "btech",
-         subjects: ["subjectId1", "subjectId2"]
-       },
-       ...
-     ],
-     availability: {
-       "Day Order 1": [1, 2, 3],
-       "Day Order 2": [4, 5],
-       ...
-     }
-   }
+   2. SUBMIT WILLINGNESS FORM
+   Accepts EITHER:
+     A) New format: { semesters: [{sem, program, subjects:[id,...]}, ...], availability }
+     B) Old format: { subjects: [id,...], availability }  (auto-builds semesters)
    ============================================================ */
 export const submitWillingness = async (req, res) => {
   try {
     const teacherId = req.user.teacherId;
-    const { semesters, availability } = req.body;
-
-    if (!teacherId) {
+    if (!teacherId)
       return res.status(403).json({ message: "No teacher account linked" });
-    }
 
-    // Validate semesters array
-    if (!semesters || !Array.isArray(semesters) || semesters.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Please select at least one semester",
-      });
-    }
+    const { semesters: incomingSemesters, subjects: flatSubjects, availability } = req.body;
 
-    // Validate each semester has subjects selected
-    for (const entry of semesters) {
-      if (!entry.sem || !entry.program) {
-        return res.status(400).json({
-          success: false,
-          message: "Each semester entry must have sem and program",
-        });
+    let semesters = [];
+
+    if (incomingSemesters && incomingSemesters.length > 0) {
+      // New format — validate each semester has at least 1 subject
+      semesters = incomingSemesters.filter((s) => s.subjects && s.subjects.length > 0);
+    } else if (flatSubjects && flatSubjects.length > 0) {
+      // Old format — build semesters from subject docs
+      const subjectDocs = await Subject.find({ _id: { $in: flatSubjects } });
+      const semMap = new Map();
+      for (const sub of subjectDocs) {
+        const key = `${sub.sem}-${sub.program}`;
+        if (!semMap.has(key)) semMap.set(key, { sem: sub.sem, program: sub.program, subjects: [] });
+        semMap.get(key).subjects.push(sub._id);
       }
-      if (!entry.subjects || entry.subjects.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: `Please select at least one subject for Semester ${entry.sem}`,
-        });
-      }
+      semesters = Array.from(semMap.values());
     }
 
-    // Upsert — update existing or create new
-    // Reset status to "pending" whenever faculty resubmits
+    if (!semesters.length) {
+      return res.status(400).json({ message: "Please select at least one subject before submitting." });
+    }
+
     const form = await Willingness.findOneAndUpdate(
       { teacherId },
-      {
-        teacherId,
-        semesters,
-        availability: availability || {},
-        status: "pending",
-      },
+      { teacherId, semesters, availability: availability || {}, status: "pending" },
       { new: true, upsert: true }
     );
 
-    res.json({
-      success: true,
-      message: "Willingness submitted successfully",
-      form,
-    });
-
+    res.json({ success: true, message: "Willingness submitted successfully", form });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to submit willingness",
-      error: error.message,
-    });
+    res.status(500).json({ error: error.message });
   }
 };
 
-
 /* ============================================================
    3. GET TIMETABLE FOR LOGGED-IN TEACHER
-   Route: GET /api/teachers/timetable
    ============================================================ */
 export const getFacultyTimetable = async (req, res) => {
   try {
     const teacherId = req.user.teacherId;
-
-    if (!teacherId) {
+    if (!teacherId)
       return res.status(403).json({ message: "No teacher linked to this login" });
-    }
 
     const timetable = await Timetable.find({ teacherId })
       .populate("subjectId")
@@ -140,35 +93,20 @@ export const getFacultyTimetable = async (req, res) => {
       .populate("sectionId");
 
     const formatted = timetable.map((item) => ({
-      _id:         item._id,
-      dayOrder:    item.dayOrder,
       day:         item.day,
       slot:        item.slot,
-      isLab:       item.isLab,
       subjectName: item.subjectId?.name,
       subjectCode: item.subjectId?.code,
-      subjectId:   item.subjectId,   // full object for frontend grid
-      sem:         item.subjectId?.sem,
-      program:     item.subjectId?.program,
-      batch:       item.batchId?.name || "N/A",
-      batchId:     item.batchId,
-      sectionId:   item.sectionId,
+      section:     item.sectionId?.name || "N/A",
+      batch:       item.batchId?.name   || "N/A",
+      isLab:       item.isLab,
     }));
 
     res.json({ success: true, timetable: formatted });
-
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch faculty timetable",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: "Failed to fetch faculty timetable", error: error.message });
   }
 };
 
-
-/* ============================================================
-   BACKWARD COMPATIBILITY EXPORTS
-   ============================================================ */
 export const getTeacherSubjects  = getAssignedSubjects;
 export const getTeacherTimetable = getFacultyTimetable;

@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const subjectSchema = new mongoose.Schema(
   {
@@ -22,23 +22,27 @@ const subjectSchema = new mongoose.Schema(
       required: true,
       default: 3,
     },
-    // NEW — which program this subject belongs to
+
+    // program (btech / mtech)
     program: {
       type: String,
       enum: ["btech", "mtech"],
       required: true,
       default: "btech",
     },
-    // NEW — which semester this subject belongs to
+
+    // semester
     sem: {
       type: Number,
       required: true,
       min: 1,
-      max: 8,   // 1-8 for btech, 1-4 for mtech
+      max: 8,
       default: 1,
     },
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Subject", subjectSchema);
+const Subject = mongoose.model("Subject", subjectSchema);
+
+export default Subject;

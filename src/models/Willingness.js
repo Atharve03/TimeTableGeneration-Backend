@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 // Sub-schema: one semester entry in willingness
 const semesterEntrySchema = new mongoose.Schema(
@@ -32,12 +32,11 @@ const willingnessSchema = new mongoose.Schema(
       required: true,
     },
 
-    // NEW — list of semesters the faculty is willing to teach
-    // each entry has sem number, program, and subjects for that sem
+    // list of semesters the faculty is willing to teach
     semesters: [semesterEntrySchema],
 
-    // Availability: which slots on which day orders the teacher is free
-    // { "Day Order 1": [1,2,3], "Day Order 2": [4,5], ... }
+    // Availability: which slots teacher is free
+    // Example: { "Day Order 1": [1,2,3], "Day Order 2": [4,5] }
     availability: {
       type: Map,
       of: [Number],
@@ -53,4 +52,6 @@ const willingnessSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Willingness", willingnessSchema);
+const Willingness = mongoose.model("Willingness", willingnessSchema);
+
+export default Willingness;

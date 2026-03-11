@@ -2,14 +2,23 @@ import mongoose from "mongoose";
 
 const batchSchema = new mongoose.Schema(
   {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     sectionId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Section",
-      required: true
+      required: true,
     },
-    batchNumber: { type: Number, enum: [1, 2], required: true }
+    strength: {
+      type: Number,
+      default: 20,
+    },
   },
   { timestamps: true }
 );
 
-export default mongoose.model("Batch", batchSchema);
+const Batch = mongoose.model("Batch", batchSchema);
+export default Batch;

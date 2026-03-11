@@ -1,172 +1,155 @@
-const mongoose  = require("mongoose");
-const Teacher   = require("../../models/Teacher");
-const Subject   = require("../../models/Subject");
-const Section   = require("../../models/Section");
-const Batch     = require("../../models/Batch");
-const Timetable = require("../../models/Timetable");
-const Willingness = require("../../models/Willingness");
-const TeacherSubject = require("../../models/TeacherSubject");
+import mongoose from "mongoose";
 
-const { allocateLabs }     = require("./labAllocator");
-const { allocateLectures } = require("./lectureAllocator");
+import Section        from "../../models/Section.js";
+import Batch          from "../../models/Batch.js";
+import Timetable      from "../../models/Timetable.js";
+import Willingness    from "../../models/Willingness.js";
+import TeacherSubject from "../../models/TeacherSubject.js";
+import Room           from "../../models/Room.js";
 
-/**
- * Main timetable generation function.
- *
- * Flow:
- * 1. Load all approved willingness forms (new semesters structure)
- * 2. Build a roleMap: teacherId → { teacher, subjects[], role }
- * 3. Load sections + batches
- * 4. Phase 1: Allocate lab sessions (labAllocator)
- * 5. Phase 2: Allocate theory lectures (lectureAllocator) with designation limits
- * 6. Conflict check entire result
- * 7. Clear old timetable → insert new entries
- */
+import { allocateLabs }     from "./labAllocator.js";
+import { allocateLectures } from "./lectureAllocator.js";
+
+const DAYS = ["Day Order 1","Day Order 2","Day Order 3","Day Order 4","Day Order 5"];
+
 async function generateTimetable() {
   console.log("[TT] Starting timetable generation...");
 
-  // ── 1. Load approved willingness forms ───────────────────────
   const willingnessList = await Willingness.find({ status: "approved" })
     .populate("teacherId")
     .populate("semesters.subjects");
 
-  if (!willingnessList.length) {
-    throw new Error("No approved willingness forms found. Please approve faculty forms first.");
-  }
+  if (!willingnessList.length)
+    throw new Error("No approved willingness forms found.");
 
   console.log(`[TT] Found ${willingnessList.length} approved willingness forms`);
 
-  // ── 2. Build roleMap from TeacherSubject assignments ─────────
-  // roleMap: teacherId_string → { teacher, role }
   const assignments = await TeacherSubject.find()
     .populate("teacherId")
     .populate("subjectId");
 
-  const roleMap = new Map();
+  console.log(`[TT] TeacherSubject assignments: ${assignments.length}`);
+
+  const labRoleMap     = new Map();
+  const teacherRoleMap = new Map();
+
   for (const a of assignments) {
     if (!a.teacherId || !a.subjectId) continue;
+    const sid = a.subjectId._id.toString();
     const tid = a.teacherId._id.toString();
-    roleMap.set(tid, {
-      teacher: a.teacherId,
-      role:    a.role,   // "theory" | "main" | "cofaculty"
-    });
+
+    if (!labRoleMap.has(sid)) labRoleMap.set(sid, { main: null, cofaculty: null });
+    const entry = labRoleMap.get(sid);
+    if (a.role === "main")      entry.main      = a.teacherId;
+    if (a.role === "cofaculty") entry.cofaculty  = a.teacherId;
+    if (a.role === "theory")    entry.main       = a.teacherId;
+
+    teacherRoleMap.set(tid, { teacher: a.teacherId, role: a.role });
   }
 
-  // ── 3. Build subject list from willingness semesters ─────────
-  // Each willingness entry has semesters[].subjects[]
-  // We flatten these into a workable list with teacherId attached
-  const subjectAssignments = []; // { subject, teacher, sem, program }
+  const seenPairs = new Set();
+  const subjectAssignments = [];
 
   for (const w of willingnessList) {
     const teacher = w.teacherId;
     if (!teacher) continue;
-
     for (const semEntry of w.semesters) {
       for (const subject of semEntry.subjects) {
         if (!subject) continue;
-        subjectAssignments.push({
-          subject,
-          teacher,
-          sem:     semEntry.sem,
-          program: semEntry.program,
-        });
+        const key = `${teacher._id}-${subject._id}`;
+        if (seenPairs.has(key)) continue;
+        seenPairs.add(key);
+        subjectAssignments.push({ subject, teacher, sem: semEntry.sem, program: semEntry.program });
       }
     }
   }
 
-  console.log(`[TT] Total subject assignments from willingness: ${subjectAssignments.length}`);
+  console.log(`[TT] Total subject assignments: ${subjectAssignments.length}`);
 
-  // ── 4. Load sections + batches ───────────────────────────────
   const sections = await Section.find();
   const batches  = await Batch.find().populate("sectionId");
+  if (!sections.length) throw new Error("No sections found.");
+  console.log(`[TT] Sections: ${sections.length}, Batches: ${batches.length}`);
 
-  if (!sections.length) {
-    throw new Error("No sections found. Please create sections first.");
-  }
+  // Load admin-defined rooms
+  const allRooms   = await Room.find().sort({ name: 1 });
+  const theoryRooms = allRooms.filter((r) => r.type === "theory" || r.type === "both").map((r) => r.name);
+  const labRooms    = allRooms.filter((r) => r.type === "lab"    || r.type === "both").map((r) => r.name);
 
-  // ── 5. Build in-memory timetable + teacher availability ──────
-  // Attach availability from willingness to each teacher object
-  const teacherAvailabilityMap = new Map();
-  for (const w of willingnessList) {
-    if (!w.teacherId) continue;
-    teacherAvailabilityMap.set(w.teacherId._id.toString(), w.availability);
-  }
+  // Fallback if no rooms defined
+  const finalTheoryRooms = theoryRooms.length ? theoryRooms : ["ROOM-101","ROOM-102","ROOM-103"];
+  const finalLabRooms    = labRooms.length    ? labRooms    : ["LAB-1","LAB-2"];
 
-  // Attach availability to teacher objects used in subjectAssignments
-  for (const sa of subjectAssignments) {
-    const tid = sa.teacher._id.toString();
-    sa.teacher.availability = teacherAvailabilityMap.get(tid) || {};
-  }
+  console.log(`[TT] Theory rooms: ${finalTheoryRooms.join(", ")}`);
+  console.log(`[TT] Lab rooms: ${finalLabRooms.join(", ")}`);
 
-  // ── 6. Phase 1 — Allocate labs ───────────────────────────────
+  const uniqueTeachers = Array.from(
+    new Map(subjectAssignments.map((sa) => [sa.teacher._id.toString(), sa.teacher])).values()
+  );
+
+  // Phase 1 — Labs
   console.log("[TT] Phase 1: Allocating lab sessions...");
   const labSubjects = subjectAssignments.filter((sa) => sa.subject.isLab);
+  console.log(`[TT] Lab subjects found: ${labSubjects.length}`);
 
-  // Group lab subjects by section
-  // For labs we need main teacher + cofaculty
-  const labEntries = await allocateLabs(
-    sections,
-    batches,
-    labSubjects,
-    willingnessList,
-    roleMap
-  );
-
+  let labEntries = [];
+  try {
+    labEntries = await allocateLabs({
+      subjects:    labSubjects.map((sa) => sa.subject),
+      batches, sections, labRoleMap,
+      labRooms:    finalLabRooms,
+      days:        DAYS,
+      slotsPerDay: 10,
+    });
+  } catch (err) {
+    console.error("[TT] allocateLabs crashed:", err);
+    throw err;
+  }
   console.log(`[TT] Phase 1 complete: ${labEntries.length} lab entries placed`);
 
-  // ── 7. Phase 2 — Allocate theory lectures ────────────────────
+  // Phase 2 — Theory
   console.log("[TT] Phase 2: Allocating theory lectures...");
-  const theorySubjects = subjectAssignments.filter((sa) => !sa.subject.isLab);
-
-  // Build a subjects array with teacherId attached (for lectureAllocator)
+  const theorySubjects    = subjectAssignments.filter((sa) => !sa.subject.isLab);
   const theorySubjectDocs = theorySubjects.map((sa) => ({
     ...sa.subject.toObject(),
-    teacherId:  sa.teacher._id,
-    sem:        sa.sem,
-    program:    sa.program,
-    sectionId:  sections[0]?._id, // TODO: match section by sem/program properly
+    teacherId: sa.teacher._id,
+    sem:       sa.sem,
+    program:   sa.program,
+    sectionId: sections[0]?._id,
   }));
 
-  const teachers = subjectAssignments.map((sa) => sa.teacher);
-  // Deduplicate teachers
-  const uniqueTeachers = Array.from(
-    new Map(teachers.map((t) => [t._id.toString(), t])).values()
-  );
-
-  const theoryEntries = await allocateLectures(
-    sections,
-    theorySubjectDocs,
-    uniqueTeachers,
-    labEntries,
-    roleMap
-  );
-
+  let theoryEntries = [];
+  try {
+    theoryEntries = await allocateLectures(
+      sections, theorySubjectDocs, uniqueTeachers,
+      labEntries, teacherRoleMap, finalTheoryRooms
+    );
+  } catch (err) {
+    console.error("[TT] allocateLectures crashed:", err);
+    throw err;
+  }
   console.log(`[TT] Phase 2 complete: ${theoryEntries.length} theory entries placed`);
 
-  // ── 8. Merge + conflict check ─────────────────────────────────
   const allEntries = [...labEntries, ...theoryEntries];
+  const seenKeys   = new Set();
+  const clean      = [];
 
-  // Final conflict check — flag any duplicates
-  const seen = new Set();
-  const clean = [];
   for (const entry of allEntries) {
     const key = `${entry.teacherId}-${entry.day}-${entry.slot}`;
-    if (seen.has(key)) {
-      console.error(`[CONFLICT] Duplicate entry detected: teacher ${entry.teacherId} at ${entry.day} slot ${entry.slot}`);
-      continue; // skip conflicting entry
+    if (seenKeys.has(key)) {
+      console.error(`[CONFLICT] teacher ${entry.teacherId} at ${entry.day} slot ${entry.slot}`);
+      continue;
     }
-    seen.add(key);
+    seenKeys.add(key);
     clean.push(entry);
   }
 
   console.log(`[TT] After conflict check: ${clean.length} entries (removed ${allEntries.length - clean.length} conflicts)`);
 
-  // ── 9. Clear old timetable + insert new ──────────────────────
   await Timetable.deleteMany({});
   const inserted = await Timetable.insertMany(clean);
-
   console.log(`[TT] Done! Inserted ${inserted.length} timetable entries.`);
   return inserted;
 }
 
-module.exports = generateTimetable;
+export default generateTimetable;
